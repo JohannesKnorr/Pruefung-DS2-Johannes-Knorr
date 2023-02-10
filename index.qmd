@@ -1,5 +1,6 @@
 ---
-title: "Pruefung DS2 Johannes Knorr"
+title: "Pruefung DS2 Johannes Knorr - Textanalyse des Heidelberger Datensatzes"
+author: "Johannes Knorr - Matrikelnummer: 00158033"
 listing:
   contents: posts
   sort: "date desc"
