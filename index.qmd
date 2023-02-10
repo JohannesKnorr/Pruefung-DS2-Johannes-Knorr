@@ -1,0 +1,1171 @@
+---
+title: "Pruefung DS2 Johannes Knorr"
+listing:
+  contents: posts
+  sort: "date desc"
+  type: default
+  categories: true
+  sort-ui: false
+  filter-ui: false
+page-layout: full
+title-block-banner: true
+---
+
+
+
+
+
+# Blogpost Data Science Text Mining - Textanalyse des Heidelberger Datensatzes.
+
+In diesem Post geht es darum, wie gut mithilfe von Textanalyse die Sentimentvariable (X2) anhand den zugehörigen Daten vorherzusagen ist.
+
+
+
+
+### Daten einlesen
+
+
+Zuerst werden die für die Textanalyse wichtigesten Pakete geladen.
+
+
+
+```{r}
+library(tidyverse)
+library(tidytext)
+library(tokenizers)
+library(easystats)
+library(naivebayes)
+library(textrecipes)
+library(tidymodels)
+library(lsa)
+library(discrim)
+library(parsnip)
+library(glmnet)
+library(fastrtext)
+```
+
+
+
+
+
+
+### Datensatz importieren
+
+Der Datensatz wurde lokal importiert, kann aber auch online heruntergeladen werden:
+
+- Quelle: Wiegand, Michael. 2019b. “GermEval-2018 Corpus (DE).” heiDATA. https://doi.org/10.11588/DATA/0B5VML.
+———. 2019a. “GermEval-2018 Corpus (DE).” heiDATA. https://doi.org/10.11588/DATA/0B5VML.
+———. 2019c. “GermEval-2018-Data-Master.” In GermEval-2018 Corpus (DE). heiDATA. https://doi.org/10.11588/data/0B5VML/XIUWJ7.
+
+
+
+```{r}
+d_pfad <- "C:/R Data Science/DS2/Text Mining/Übung/Übung Datensatz Uni Heidelberg/GermEval-2018-Data-master/germeval2018.training.txt"
+```
+
+
+
+
+
+```{r}
+dataset <- read_tsv(d_pfad, col_names = FALSE)
+```
+
+
+
+
+Ich fange damit an, dem Datensatz eine ID-Variable zu geben und anschließend typische Befehle auszuführen, die mir dabei helfen, vertrauter mit dem 
+Datensatz zu werden.
+
+
+
+
+ID Variable für den Datensatz:
+
+```{r}
+dataset <- dataset %>% mutate(id = as.character(1:nrow(.)))
+```
+
+
+
+```{r}
+dataset %>% nrow()
+```
+
+```{r}
+dataset %>% head()
+```
+
+
+
+
+X1 ist der Textinhalt und bei X2 und X3 handelt es sich um die Klassifikation bzw. Sentimentauswertung des jeweiligen Textinhaltes.
+
+
+
+Welche Variablen hat X2 & X3?
+
+
+X2:
+
+```{r}
+dataset %>% count(X2)
+```
+
+
+
+X3:
+
+```{r}
+dataset %>% count(X3)
+```
+
+
+
+
+Kann es sein dass, wenn es sich um "Offense" handelt ist X3 wohl immer "Abuse", "Insult" oder "Profanity"?
+
+
+Gegenprobe:
+
+```{r}
+dataset %>% filter(X2 == "OFFENSE", X3 == "OTHER") %>% nrow() / nrow(dataset)
+```
+
+
+
+
+
+
+
+```{r}
+dataset %>%  filter(X2 == "OTHER", X3 == "OTHER") %>% nrow() / nrow(dataset)
+```
+
+Die Texte wurden also mit ca. 66% mit Other Klassifiziert und müssten dann zu 33% mit offense Klassifiziert werden.
+
+
+
+
+
+
+```{r}
+dataset %>%  filter(X2 == "OFFENSE") %>% nrow() / nrow(dataset)
+```
+
+
+
+
+
+
+
+
+
+
+# Sentimentanalyse
+
+
+Für die Sentimentanalyse nehme ich die Deutsche Quelle für eine Sentimentanalyse von Remus, Quasthoff, und Heimer 2010
+
+
+
+```{r}
+sentiment <- read_csv("https://osf.io/x89wq/?action=download")
+```
+
+
+
+
+
+
+Bevor ich die Texte für die Senitmentanalyse tokenisiere ist es hiflreich noch eine Spalite hinzufügen die mir Sagt wie lange der Text vorher war.
+
+
+
+```{r}
+dataset1 <- dataset %>%  mutate(text_length = str_length(X1))
+```
+
+
+```{r}
+head(dataset1)
+```
+
+
+
+
+
+Bevor die Sentimentanalyse durchgeführt wird müssen die einzelnen Textzeilen tokenisiert werden.
+
+
+```{r}
+dataset_token <- dataset1 %>% 
+  unnest_tokens(input = X1, output = token)
+```
+
+
+
+```{r}
+head(dataset_token)
+```
+
+
+
+
+
+Nun die Sentimentanalyse mithilfe "inner_join"
+
+
+```{r}
+dataset_sentiment <- 
+  dataset_token %>% 
+  inner_join(sentiment %>% select(-inflections), by = c("token" = "word"))
+```
+
+
+
+```{r}
+head(dataset_sentiment)
+```
+
+Hier sieht man nun die einzelnen Sentimentwörter ("token") und jeweils die negative oder positive Ausrichtung der Wörter ("neg"). 
+
+
+
+
+
+```{r}
+dataset_sentiment %>% 
+  count(token, sort = TRUE)
+```
+
+
+
+
+
+```{r}
+dataset_sentiment %>% 
+  count(token, neg_pos, sort = TRUE) %>% 
+  mutate(token = reorder(token, n)) %>% 
+  slice_max(n, n = 20) %>% 
+  ggplot(aes(n, token, fill = neg_pos)) +
+  geom_col(show.legend = TRUE) +
+  facet_wrap(~neg_pos, scales = "free_y")
+```
+
+
+
+Es kommen im Datensatz deutlich weniger negative Wörter vor als positive Wörter.
+
+Diese These kann man noch kurz prüfen:
+
+```{r}
+dataset_sentiment %>% 
+  count(neg_pos)
+```
+
+
+Ca. 700 mehr positiv gerichtete Wörter kommen im Datensatz vor.
+
+
+
+
+
+
+Nun können wir den Durchschnitt der einzelnen Sentimentausprägungen berechnen:
+
+
+```{r}
+dataset_sentiment2 <- dataset_sentiment %>% 
+  group_by(id, neg_pos) %>% 
+  summarise(senti_mean = mean(value))
+```
+
+
+```{r}
+head(dataset_sentiment2)
+```
+
+
+
+
+
+
+
+
+Nun kann dieser Datensatz mit dem ursprünglichen Datensatz verschmolzen werden, davor muss der Datensatz in die Breite gezogen werden ("pivot_wider").
+
+```{r}
+dataset_sentiment_pivot <- dataset_sentiment2 %>% 
+  pivot_wider(names_from = "neg_pos", values_from = "senti_mean")
+```
+
+
+
+
+```{r}
+head(dataset_sentiment_pivot)
+```
+
+
+
+Nun das verschmelzen mit dem ursprünglichem Datensatz:
+
+```{r}
+dataset2 <- 
+  dataset1 %>% 
+  full_join(dataset_sentiment_pivot)
+```
+```{r}
+head(dataset2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Initlial Split
+
+
+
+Bevor ich mit dem definieren des Rezepts beginne werden die Daten aufgeteilt um Sie später testen zu können:
+
+
+```{r}
+data_split <- initial_split(dataset2, strata = X1)
+
+data_train <- training(data_split)
+data_test <- testing(data_split)
+```
+
+
+
+# 1. Rezept (tfidf)
+
+Bei meinem ersten Rezept arbeite ich mit "tfidf", dies ist die Abkürzung für "term frequency and inverse document frequency". 
+Dieser Befehl zählt zuerst die Worthäufigkeiten und gibt dann den Tokens eine entgegengesetzte Gewichtung. 
+
+
+Quelle: Hvitfeldt, Emil, and Julia Silge. 2022. Supervised Machine Learning for Text Analysis in r. 1st ed. Boca Raton: Chapman; Hall/CRC. https://doi.org/10.1201/9781003093459.
+
+
+
+```{r}
+rezept1 <-
+  recipe(X2 ~ ., data = select(data_train, X1, X2, id)) %>% 
+  update_role(id, new_role = "id") %>% 
+  step_tokenize(X1) %>% 
+  step_stopwords(X1, language = "de", stopword_source = "snowball") %>% 
+  step_tokenfilter(X1, max_tokens = 1e2) %>% 
+  step_stem(X1) %>% 
+  step_tfidf(X1) %>% 
+  step_normalize(all_numeric_predictors())
+
+rezept1  
+```
+
+
+Preppen:
+
+```{r}
+rezept1_prep <- prep(rezept1)
+```
+
+
+Baken:
+
+```{r}
+rezept1_bake <- bake(rezept1_prep, new_data = NULL)
+```
+
+```{r}
+head(rezept1_bake)
+```
+
+
+
+
+## Modelle
+
+
+Bei dieser Textanalyse möchte ich mich auf 2 bestimmte Modelle beschränken und zwar auf ein Bayesmodell und ein Lasso Modell.
+Baummodelle eignen sich für das Text Mining nicht so gut und man stößt schnell auf Probleme. 
+(siehe Kapitel 6.3 - Hvitfeldt, Emil, and Julia Silge. 2022. Supervised Machine Learning for Text Analysis in r. 1st ed. Boca Raton: Chapman; Hall/CRC. https://doi.org/10.1201/9781003093459.).
+
+
+
+
+### Bayesmodell:
+
+```{r}
+naiv_bay <- naive_Bayes() %>% 
+  set_mode("classification") %>% 
+  set_engine("naivebayes")
+```
+
+
+```{r}
+naiv_bay
+```
+
+
+
+### Lassomodell:
+
+
+```{r}
+lasso_mod <- logistic_reg(penalty = tune(), mixture = 1) %>% 
+  set_mode("classification") %>% 
+  set_engine("glmnet")
+```
+
+```{r}
+lasso_mod
+```
+
+
+
+
+
+### Kreuzvalidierung 10x:
+
+
+Die Kreuzvalidierung wird 10fach durchgeführt um den Modellen mehr Güte zu geben, indem sie auf jeden einzelnen "Fold" gefittet werden.
+
+```{r}
+set.seed(42)
+v_fold <- vfold_cv(data_train)
+```
+
+
+
+
+# 1.Workflow
+
+
+### 1. Rezept + Bayesmodell
+
+
+```{r}
+workflow1 <- 
+  workflow() %>% 
+  add_recipe(rezept1) %>% 
+  add_model(naiv_bay)
+```
+
+
+
+```{r}
+workflow1
+```
+
+
+
+
+
+
+
+
+
+
+Fitten:
+
+```{r}
+fit_workflow1 <- 
+  fit_resamples(
+    workflow1,
+    v_fold,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+fit_workflow1
+```
+
+
+
+
+
+# Performance des 1. Workflows
+
+
+```{r}
+workflow1_perf <-
+  collect_metrics(fit_workflow1)
+
+workflow1_perf
+```
+
+
+
+
+```{r}
+workflow1_pred <- 
+  collect_predictions(fit_workflow1)
+```
+
+
+
+
+
+```{r}
+workflow1_pred %>% 
+  group_by(id) %>% 
+  roc_curve(truth = X2, .pred_OFFENSE) %>% 
+  autoplot()
+```
+
+Naja könnte vielleicht ein wenig besser aussehen. Die einzelnen Linien verlaufen oft schwungartig und manche sogar unter 0.5.
+
+
+
+
+
+
+
+
+
+# 2. Rezept (tf)
+
+Beim zweiten Rezept arbeite ich mit "tf", bedeutet "term frequency" und zählt wie häufig einzelne Wörter im Datensatz vorkommen. 
+
+
+
+
+```{r}
+rezept2 <-
+  recipe(X2 ~ ., data = select(data_train, X1, X2, id)) %>% 
+  update_role(id, new_role = "id") %>% 
+  step_tokenize(X1) %>% 
+  step_stopwords(X1, language = "de", stopword_source = "snowball") %>% 
+  step_stem(X1) %>% 
+  step_tokenfilter(X1, max_tokens = 1e2) %>% 
+  step_tf(X1) %>% 
+  step_normalize(all_numeric_predictors())
+
+rezept2 
+```
+
+
+Preppen:
+
+```{r}
+rezept2_prep <- prep(rezept2)
+```
+
+Baken:
+
+
+```{r}
+rezept2_bake <- bake(rezept2_prep, new_data = NULL)
+```
+
+
+```{r}
+head(rezept2_bake)
+```
+
+
+
+
+
+
+
+
+
+
+# 2. Workflow
+
+### 2. Rezept + Lassomodell
+
+
+
+
+
+
+Penalty:
+
+```{r}
+grid_penalty <- grid_regular(penalty(), levels = 5)
+```
+
+
+
+
+```{r}
+workflow2 <- 
+  workflow() %>% 
+  add_recipe(rezept2) %>% 
+  add_model(lasso_mod)
+
+workflow2
+```
+
+
+```{r}
+set.seed(42)
+
+fit_workflow2 <-
+  tune_grid(
+    workflow2,
+    v_fold,
+    grid = grid_penalty,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+fit_workflow2
+```
+
+
+
+```{r}
+collect_metrics(fit_workflow2) %>% 
+  filter(.metric == "roc_auc") %>% 
+  slice_max(mean, n = 3)
+```
+
+
+```{r}
+workflow2_perf <-
+  collect_metrics(fit_workflow2)
+
+workflow2_perf
+```
+
+
+
+
+```{r}
+autoplot(fit_workflow2)
+```
+
+
+
+
+# Performance des 2. Workflows
+
+```{r}
+workflow2_pred <- 
+  collect_predictions(fit_workflow2)
+```
+
+
+```{r}
+workflow2_pred %>% 
+  group_by(id) %>% 
+  roc_curve(truth = X2, .pred_OFFENSE) %>% 
+  autoplot()
+```
+
+
+
+
+Hier sind die Folds zwar nicht so schnwungartig, aber es ist kaum eine Kurve zu erkennen.
+
+
+
+
+
+
+
+
+
+# 3. Workflow
+
+###  1. Rezept + Lassomodell
+
+
+```{r}
+workflow3 <- 
+  workflow() %>% 
+  add_recipe(rezept1) %>% 
+  add_model(lasso_mod)
+
+workflow3
+```
+
+
+```{r}
+set.seed(42)
+
+fit_workflow3 <-
+  tune_grid(
+    workflow3,
+    v_fold,
+    grid = grid_penalty,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+fit_workflow3
+```
+
+
+
+```{r}
+workflow3_perf <-
+  collect_metrics(fit_workflow3)
+
+workflow3_perf
+```
+
+
+# Perfomance des 3. Workflows
+
+```{r}
+workflow3_pred <- 
+  collect_predictions(fit_workflow3)
+```
+
+
+
+
+
+```{r}
+workflow3_pred %>% 
+  group_by(id) %>% 
+  roc_curve(truth = X2, .pred_OFFENSE) %>% 
+  autoplot()
+```
+
+
+Hier sind die Folds sehr geradlienig und es ist somit kaum eine Kurve zu erkennen
+
+
+
+
+
+
+
+# 4. Workflow
+
+### 2. Rezept + Bayesmodell
+
+
+
+```{r}
+workflow4 <- 
+  workflow() %>% 
+  add_recipe(rezept2) %>% 
+  add_model(naiv_bay)
+
+workflow4
+```
+
+
+
+```{r}
+fit_workflow4 <- 
+  fit_resamples(
+    workflow4,
+    v_fold,
+    control = control_resamples(save_pred = TRUE)
+  )
+```
+
+
+
+```{r}
+workflow4_perf <-
+  collect_metrics(fit_workflow4)
+
+workflow4_perf
+```
+
+
+# Perfomance des 4. Workflows
+
+```{r}
+workflow4_pred <- 
+  collect_predictions(fit_workflow4)
+```
+
+
+
+```{r}
+workflow4_pred %>% 
+  group_by(id) %>% 
+  roc_curve(truth = X2, .pred_OFFENSE) %>% 
+  autoplot()
+```
+
+
+Die Folds hier sind etwas "wackelig" bewegen sich aber gemeinsam in eine Richtung und zeigen eine leichte Kruve
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 3. Rezept mit Worteinbettungen
+
+
+### Word Embeddings erstellen
+
+
+Die folgenden Wortvektoren sind aus diesem Paper: E. Grave*, P. Bojanowski*, P. Gupta, A. Joulin, T. Mikolov, Learning Word Vectors for 157 Languages
+
+
+
+```{r}
+embedding_txt <- "C:/R Data Science/cc.de.300.vec"
+embedding_modell <- "C:/R Data Science/cc.de.300.bin"
+```
+
+
+
+
+
+
+```{r}
+fasttext_modell <- load_model(embedding_modell)
+dictionary <- get_dictionary(fasttext_modell)
+```
+
+
+
+
+```{r}
+word_embedding <- tibble(word = dictionary)
+```
+
+
+
+
+```{r}
+wortvektoren <- get_word_vectors(fasttext_modell)
+```
+
+
+```{r}
+word_embedding <- word_embedding %>% bind_cols(wortvektoren)
+```
+
+
+
+### 3. Rezept
+
+
+
+
+
+```{r}
+rezept3 <-
+  recipe(X2 ~ ., data = select(data_train, X1, X2, id)) %>% 
+  update_role(id, new_role = "id") %>% 
+  step_tokenize(X1) %>% 
+  step_stopwords(X1, language = "de", stopword_source = "snowball") %>% 
+  step_stem(X1) %>% 
+  step_tokenfilter(X1, max_tokens = 1e2) %>% 
+  step_word_embeddings(X1, embeddings = word_embedding) %>% 
+  step_normalize(all_numeric_predictors())
+
+rezept3 
+```
+
+
+Preppen:
+
+```{r}
+rezept3_prep <- prep(rezept3)
+```
+
+
+
+
+
+Baken:
+
+```{r}
+rezept3_bake <- bake(rezept3_prep, new_data = NULL)
+```
+
+
+
+
+
+# 5. Workflow
+
+### Word Embedding mit Lassomodell
+
+
+```{r}
+workflow5 <- 
+  workflow() %>% 
+  add_recipe(rezept3) %>% 
+  add_model(lasso_mod)
+
+workflow5
+```
+
+
+
+
+Fitten:
+
+```{r}
+set.seed(42)
+
+fit_workflow5 <-
+  tune_grid(
+    workflow5,
+    v_fold,
+    grid = grid_penalty,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+fit_workflow5
+```
+
+
+
+
+
+
+```{r}
+workflow5_perf <-
+  collect_metrics(fit_workflow5)
+
+workflow5_perf
+```
+
+
+
+# Performance des 5. Workflows:
+
+```{r}
+workflow5_pred <- 
+  collect_predictions(fit_workflow5)
+```
+
+
+
+
+
+```{r}
+workflow5_pred %>% 
+  group_by(id) %>% 
+  roc_curve(truth = X2, .pred_OFFENSE) %>% 
+  autoplot()
+```
+
+Die Folds sind hier nicht ganz so wackelig, liegen aber zum Teil etas weiter auseinander.
+
+
+
+
+
+
+
+
+#6. Workflow
+
+### Wordembedding mit Bayesmodell
+
+
+
+
+
+```{r}
+workflow6 <- 
+  workflow() %>% 
+  add_recipe(rezept3) %>% 
+  add_model(naiv_bay)
+
+workflow6
+```
+
+
+
+
+
+
+```{r}
+fit_workflow6 <- 
+  fit_resamples(
+    workflow6,
+    v_fold,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+fit_workflow6
+```
+
+
+
+```{r}
+workflow6_perf <-
+  collect_metrics(fit_workflow6)
+
+workflow6_perf
+```
+
+
+# Perfomance des 6. Workflows
+
+```{r}
+workflow6_pred <- 
+  collect_predictions(fit_workflow6)
+```
+
+
+
+```{r}
+workflow6_pred %>% 
+  group_by(id) %>% 
+  roc_curve(truth = X2, .pred_OFFENSE) %>% 
+  autoplot()
+```
+
+Die einzelnen Folds sind hier auch deutlich gestreuter.
+
+
+
+
+# Vorhersage
+
+Die besten "roc_aucs aus den sechs Workflows:
+
+1. Workflow
+
+```{r}
+fit_workflow1 %>% show_best("roc_auc")
+```
+
+2. Workflow
+
+```{r}
+fit_workflow2 %>% show_best("roc_auc")
+```
+
+
+3. Workflow
+
+```{r}
+fit_workflow3 %>% show_best("roc_auc")
+```
+
+
+
+
+4. Workflow
+
+
+```{r}
+fit_workflow4 %>% show_best("roc_auc")
+```
+
+
+5. Workflow
+
+
+```{r}
+fit_workflow5 %>% show_best("roc_auc")
+```
+
+
+6. Workflow
+
+
+```{r}
+fit_workflow6 %>% show_best("roc_auc")
+```
+
+
+
+In diesem Fall hat der 4. Workflow das beste "roc_auc" und auch die "schönste" Kurve (siehe #Performance des 4. Workflows)
+
+
+
+```{r}
+workflow4_roc <- 
+  fit_workflow4 %>% 
+  select_best("roc_auc")
+```
+
+
+
+```{r}
+final_workflow4 <- 
+  finalize_workflow(workflow4, workflow4_roc)
+
+final_workflow4
+```
+
+
+```{r}
+workflow4_fit_train <-
+  fit(final_workflow4, data_train)
+```
+
+
+
+
+# Finales Ergebnis
+
+```{r}
+workflow4_fit_test <-
+  last_fit(final_workflow4, data_split)
+```
+
+
+```{r}
+collect_metrics(workflow4_fit_test)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
